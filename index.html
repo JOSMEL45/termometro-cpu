@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Termómetro de CPU</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Idea: tablero de sala de control. Papel azul grisáceo, un acento azul, y el color de estado (verde, ámbar, rojo) reservado para el riesgo. */
+:root{
+  --paper:#eef1f4; --panel:#ffffff; --ink:#13202c; --muted:#53636f; --rule:#d5dce3; --accent:#1c5fc4;
+  --ok:#17794a; --warn:#9a6400; --crit:#c0322a;
+  --ok-bg:#dff3e7; --warn-bg:#fcefcc; --crit-bg:#fbe0dd;
+  --display:"Chakra Petch","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0d141b; --panel:#15202a; --ink:#e7eef4; --muted:#9bacba; --rule:#26343f; --accent:#6aa8f7;
+    --ok:#52c98b; --warn:#e8b64d; --crit:#ff7a6c;
+    --ok-bg:#133424; --warn-bg:#3a2e10; --crit-bg:#41201c; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0d141b; --panel:#15202a; --ink:#e7eef4; --muted:#9bacba; --rule:#26343f; --accent:#6aa8f7;
+  --ok:#52c98b; --warn:#e8b64d; --crit:#ff7a6c;
+  --ok-bg:#133424; --warn-bg:#3a2e10; --crit-bg:#41201c; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font:15px/1.5 var(--body);padding:20px 16px 40px}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:.01em}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
+h1{font-size:30px;line-height:1.1;font-weight:700}
+.sub{color:var(--muted);margin:4px 0 0;font-size:14px}
+.tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:4px}
+.tabs button{font:600 14px var(--display);letter-spacing:.02em;border:0;background:transparent;color:var(--muted);padding:8px 14px;border-radius:7px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--accent);color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:18px}
+.card h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:12px}
+
+/* Estado */
+.status{display:flex;align-items:center;gap:12px;border-radius:10px;padding:12px 14px;margin-bottom:14px;border:1px solid transparent}
+.status .sym{font:700 22px var(--mono);width:30px;text-align:center}
+.status .t{font:700 20px/1.15 var(--display)}
+.status .d{font-size:13px;color:var(--ink);opacity:.85}
+.s-ok{background:var(--ok-bg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.s-warn{background:var(--warn-bg);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.s-crit{background:var(--crit-bg);color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+.s-ok .d,.s-warn .d,.s-crit .d{color:var(--ink)}
+
+.instr{display:grid;grid-template-columns:120px 1fr;gap:18px;align-items:stretch}
+@media (max-width:420px){.instr{grid-template-columns:96px 1fr}}
+.thermo svg{width:100%;height:auto;display:block}
+.nums{display:flex;flex-direction:column;gap:14px;justify-content:center}
+.big{font:600 44px/1 var(--mono);letter-spacing:-.02em}
+.big small{font-size:20px;color:var(--muted);font-weight:500}
+.lab{font-size:13px;color:var(--muted);margin-top:4px}
+.pbar{position:relative;height:14px;border-radius:7px;overflow:hidden;display:flex;margin-top:8px}
+.pbar i{display:block;height:100%}
+.pbar .z1{width:30%;background:var(--ok-bg)} .pbar .z2{width:30%;background:var(--warn-bg)} .pbar .z3{width:40%;background:var(--crit-bg)}
+.pmark{position:absolute;top:-2px;bottom:-2px;width:4px;margin-left:-2px;background:var(--ink);border-radius:2px;transition:left .25s}
+.pticks{display:flex;font:500 11px var(--mono);color:var(--muted);margin-top:4px;position:relative;height:14px}
+.pticks span{position:absolute;transform:translateX(-50%)}
+
+.rec{margin-top:16px;border-top:1px solid var(--rule);padding-top:14px}
+.rec h3{font-size:17px;margin-bottom:6px}
+.rec ul{margin:6px 0 0;padding-left:18px;color:var(--ink)}
+.rec li{margin:3px 0}
+
+/* Entradas */
+.field{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin-bottom:14px}
+.field label{font-weight:500}
+.field output{font:600 15px var(--mono);text-align:right}
+.field input[type=range]{grid-column:1 / -1;width:100%;accent-color:var(--accent);margin:4px 0 0}
+.check{display:flex;gap:8px;align-items:center;margin:2px 0 14px}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.chip{font:500 13px var(--body);border:1px solid var(--rule);background:var(--paper);color:var(--ink);border-radius:999px;padding:6px 12px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.contrib{display:flex;flex-direction:column;gap:7px}
+.crow{display:grid;grid-template-columns:96px 1fr 62px;align-items:center;gap:8px;font-size:13px}
+.ctrack{position:relative;height:10px;background:var(--paper);border-radius:5px}
+.ctrack::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--muted)}
+.cbar{position:absolute;top:0;bottom:0;border-radius:5px}
+.cval{font:500 12px var(--mono);color:var(--muted);text-align:right}
+.hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+
+/* En vivo */
+.live-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.btn{font:600 14px var(--display);letter-spacing:.02em;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 16px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.clock{font:600 22px var(--mono);margin-left:auto}
+select{font:14px var(--body);background:var(--panel);color:var(--ink);border:1px solid var(--rule);border-radius:8px;padding:7px 8px}
+.chart{width:100%;height:auto;display:block}
+.chart text{font:11px var(--mono);fill:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--muted);margin:2px 0 8px}
+.legend b{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:190px;overflow:auto}
+.log li{display:flex;gap:10px;align-items:baseline;font-size:13.5px;padding:6px 10px;border-radius:8px;background:var(--paper)}
+.log time{font:600 13px var(--mono)}
+.tag{font:700 11px var(--display);letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:2px 7px}
+.tag.crit{background:var(--crit-bg);color:var(--crit)} .tag.warn{background:var(--warn-bg);color:var(--warn)} .tag.ok{background:var(--ok-bg);color:var(--ok)}
+.now{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+@media (max-width:520px){.now{grid-template-columns:repeat(2,1fr)}}
+.now div{background:var(--paper);border-radius:8px;padding:8px 10px}
+.now b{display:block;font:600 17px var(--mono)} .now span{font-size:12px;color:var(--muted)}
+details{border-top:1px solid var(--rule);padding-top:12px;margin-top:4px}
+summary{cursor:pointer;font-weight:600}
+details p{color:var(--muted);margin:8px 0 0}
+.note{font-size:13px;color:var(--muted);border-left:3px solid var(--warn);padding:2px 0 2px 12px}
+[hidden]{display:none !important}
+@media (prefers-reduced-motion:reduce){.pmark{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Termómetro de CPU</h1>
+      <p class="sub">Fase 2 del proyecto: regresión lineal y logística para anticipar la sobrecarga de un servidor.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Modo">
+      <button role="tab" id="tab-probar" aria-selected="true" aria-controls="panel-probar">Probar valores</button>
+      <button role="tab" id="tab-vivo" aria-selected="false" aria-controls="panel-vivo">Simulación del día</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="h-estado">
+      <h2 id="h-estado">Estado del servidor</h2>
+      <div id="estado" class="status s-ok" role="status" aria-live="polite">
+        <div class="sym" id="sym">●</div>
+        <div><div class="t" id="est-t">Normal</div><div class="d" id="est-d">Hay margen.</div></div>
+      </div>
+      <div class="instr">
+        <div class="thermo">
+          <svg viewBox="0 0 120 300" role="img" aria-label="Termómetro de CPU predicha">
+            <rect x="38" y="14" width="30" height="236" rx="15" fill="var(--paper)" stroke="var(--rule)" stroke-width="2"/>
+            <circle cx="53" cy="262" r="26" fill="var(--paper)" stroke="var(--rule)" stroke-width="2"/>
+            <rect id="mercurio" x="46" y="150" width="14" height="110" rx="3" fill="var(--ok)"/>
+            <circle id="bulbo" cx="53" cy="262" r="19" fill="var(--ok)"/>
+            <g id="escala"></g>
+            <line x1="30" x2="86" id="l85" stroke="var(--crit)" stroke-width="2" stroke-dasharray="4 3"/>
+            <text id="t85" x="90" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="var(--crit)">85 %</text>
+          </svg>
+        </div>
+        <div class="nums">
+          <div><div class="big" id="cpu">0<small> %</small></div><div class="lab">CPU predicha por la regresión lineal</div></div>
+          <div>
+            <div class="big" id="prob">0<small> %</small></div><div class="lab">Probabilidad de sobrecarga (regresión logística)</div>
+            <div class="pbar" aria-hidden="true"><i class="z1"></i><i class="z2"></i><i class="z3"></i><div class="pmark" id="pmark"></div></div>
+            <div class="pticks" aria-hidden="true"><span style="left:30%">30</span><span style="left:60%">60</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="rec" id="rec">
+        <h3 id="rec-t"></h3>
+        <ul id="rec-l"></ul>
+      </div>
+    </section>
+
+    <section id="panel-probar" role="tabpanel" aria-labelledby="tab-probar">
+      <div class="card">
+        <h2>Datos del servidor</h2>
+        <div class="presets" id="presets" role="group" aria-label="Situaciones de ejemplo"></div>
+        <div class="field"><label for="in-hora">Hora del día</label><output id="o-hora"></output><input type="range" id="in-hora" min="0" max="23.75" step="0.25"></div>
+        <div class="field"><label for="in-ram">Memoria RAM usada</label><output id="o-ram"></output><input type="range" id="in-ram" min="20" max="90" step="1"></div>
+        <div class="field"><label for="in-proc">Procesos activos</label><output id="o-proc"></output><input type="range" id="in-proc" min="60" max="300" step="1"></div>
+        <div class="field"><label for="in-red">Tráfico de red</label><output id="o-red"></output><input type="range" id="in-red" min="0" max="9000" step="50"></div>
+        <label class="check" for="in-fin"><input type="checkbox" id="in-fin"> Es fin de semana</label>
+        <h2 style="margin-top:6px">Qué empuja el riesgo</h2>
+        <div class="contrib" id="contrib"></div>
+        <p class="hint">Cada barra muestra cuánto sube (rojo) o baja (verde) el riesgo ese dato respecto de un servidor promedio.</p>
+      </div>
+    </section>
+
+    <section id="panel-vivo" role="tabpanel" aria-labelledby="tab-vivo" hidden>
+      <div class="card">
+        <h2>Simulación del día <span id="dia-txt" style="text-transform:none;letter-spacing:0"></span></h2>
+        <div class="live-top">
+          <button class="btn" id="play">Reproducir</button>
+          <button class="btn ghost" id="reiniciar">Reiniciar</button>
+          <label for="vel" style="font-size:13px;color:var(--muted)">Velocidad</label>
+          <select id="vel"><option value="1">1×</option><option value="4" selected>4×</option><option value="16">16×</option></select>
+          <button class="btn ghost" id="sonido" aria-pressed="false">Sonido: no</button>
+          <div class="clock" id="reloj">00:00</div>
+        </div>
+        <div class="now" id="ahora"></div>
+        <div class="legend"><span><b style="background:var(--accent)"></b>CPU real medida</span><span><b style="background:var(--crit)"></b>CPU predicha</span><span><b style="background:var(--muted);height:2px"></b>Umbral 85 %</span></div>
+        <svg class="chart" id="g-cpu" viewBox="0 0 640 190" role="img" aria-label="CPU real y predicha durante el día"></svg>
+        <div class="legend" style="margin-top:10px"><span>Probabilidad de sobrecarga</span></div>
+        <svg class="chart" id="g-prob" viewBox="0 0 640 110" role="img" aria-label="Probabilidad de sobrecarga durante el día"></svg>
+        <h2 style="margin-top:16px">Registro de alertas</h2>
+        <ul class="log" id="log"></ul>
+      </div>
+    </section>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>Cómo funciona</summary>
+      <p>Dos modelos entrenados con 4500 mediciones: una regresión lineal calcula el porcentaje de CPU a partir de la RAM, los procesos, la red y la hora; una regresión logística calcula la probabilidad de que la CPU pase del 85 %. El estado es Normal con menos de 30 % de probabilidad, Precaución entre 30 % y 60 %, y Riesgo desde 60 %.</p>
+    </details>
+    <p class="note" style="margin-top:12px">Los datos de entrenamiento son simulados. Esta página no lee ningún servidor real: para eso haría falta un programa en el servidor que mida CPU, RAM, procesos y red, y los envíe aquí.</p>
+  </div>
+</div>
+
+<script>
+const M = {"variables":["ram_pct","procesos","red_kb_s","hora","fin_de_semana"],"mean":[44.944972222222226,141.44472222222223,2598.552847222222,11.65613388888889,0.2538888888888889],"scale":[10.235372076404369,41.21651165802575,1686.2209188228928,6.874293699910509,0.4352347883472257],"lin_coef":[9.156955210452724,10.047402375555917,6.439617042556458,0.020496677421913693,-0.703539985081168],"lin_int":38.11750000000001,"log_coef":[3.047534471312553,2.290270745758347,2.033744672350682,0.11939916714372081,-0.8820303730474718],"log_int":-10.071483949523774,"dia":"2026-03-06","serie":[[0.0,47.3,179,4130.0,61.0],[0.08,47.7,164,4264.0,54.0],[0.17,46.3,188,4134.0,53.8],[0.25,52.8,156,3884.0,41.1],[0.33,42.4,141,2514.0,41.9],[0.42,42.3,172,2903.0,44.5],[0.5,63.6,243,5917.0,100.0],[0.58,65.7,225,5984.0,100.0],[0.67,59.0,197,4454.0,88.3],[0.75,57.1,191,4770.0,78.3],[0.83,53.7,196,4555.0,68.8],[0.92,53.5,153,3818.0,62.7],[1.0,43.8,166,3988.0,56.8],[1.08,45.7,131,3149.0,49.2],[1.17,44.7,159,2304.0,37.4],[1.25,38.3,131,913.0,26.0],[1.33,39.8,146,2041.0,29.7],[1.42,35.8,112,1784.0,17.3],[1.5,37.2,93,1102.0,19.6],[1.58,35.2,113,2374.0,26.2],[1.67,32.8,150,177.0,9.2],[1.75,26.2,101,1299.0,6.1],[1.83,28.9,113,1092.0,7.0],[1.92,34.7,91,253.0,17.2],[2.0,30.3,99,1623.0,11.4],[2.08,37.7,113,1785.0,10.5],[2.17,32.4,118,2397.0,11.0],[2.25,31.4,118,969.0,20.2],[2.33,35.7,91,1196.0,11.0],[2.42,32.4,87,394.0,24.0],[2.5,58.3,188,5113.0,86.9],[2.58,57.6,186,5158.0,75.0],[2.67,51.0,178,4587.0,67.5],[2.75,49.3,186,2184.0,64.8],[2.83,51.3,151,2698.0,58.4],[2.92,52.8,150,5380.0,51.9],[3.0,47.6,169,4299.0,53.5],[3.08,47.0,165,3680.0,53.8],[3.17,47.0,158,3779.0,62.8],[3.25,50.9,186,2951.0,61.9],[3.33,47.0,140,3436.0,48.6],[3.42,43.0,157,1807.0,44.0],[3.5,46.4,147,2117.0,40.4],[3.58,44.2,135,3068.0,42.4],[3.67,36.3,119,1848.0,35.2],[3.75,39.3,103,3049.0,28.8],[3.83,39.2,111,1201.0,25.2],[3.92,33.9,120,1627.0,29.0],[4.0,31.9,103,699.0,23.1],[4.08,42.0,105,2378.0,11.7],[4.17,35.4,108,1648.0,15.2],[4.25,36.6,128,2342.0,18.0],[4.33,35.9,118,332.0,20.2],[4.42,36.1,110,1375.0,11.6],[4.5,32.9,92,882.0,5.7],[4.58,36.5,108,1088.0,20.8],[4.67,33.5,112,1929.0,20.4],[4.75,32.3,92,593.0,20.2],[4.83,34.1,112,1456.0,15.3],[4.92,35.4,105,1671.0,14.1],[5.0,32.8,118,2238.0,28.3],[5.08,28.9,150,70.0,18.8],[5.17,35.7,115,1035.0,18.9],[5.25,37.7,119,1133.0,31.7],[5.33,34.3,110,1399.0,16.3],[5.42,33.3,125,1752.0,10.5],[5.5,37.5,109,1533.0,25.7],[5.58,31.8,116,2221.0,15.9],[5.67,37.7,92,2430.0,24.6],[5.75,41.2,141,969.0,22.5],[5.83,32.5,126,1499.0,19.5],[5.92,34.7,103,2517.0,16.6],[6.0,65.5,250,5038.0,95.6],[6.08,63.1,229,4946.0,97.9],[6.17,57.9,222,4793.0,87.4],[6.25,53.0,203,5082.0,75.5],[6.33,58.6,202,4162.0,82.5],[6.42,59.8,204,4178.0,74.5],[6.5,57.3,179,4748.0,72.4],[6.58,54.0,166,3959.0,71.0],[6.67,45.4,190,3524.0,60.3],[6.75,44.4,169,4476.0,58.0],[6.83,48.8,173,2397.0,48.9],[6.92,43.2,151,2835.0,41.2],[7.0,43.4,160,3496.0,45.7],[7.08,45.5,127,2420.0,43.9],[7.17,46.9,158,3695.0,45.0],[7.25,43.4,156,1639.0,49.4],[7.33,46.1,136,3430.0,47.8],[7.42,39.7,156,2341.0,42.8],[7.5,43.4,151,2815.0,43.3],[7.58,42.3,137,3218.0,29.8],[7.67,40.0,143,2874.0,41.4],[7.75,40.9,120,1902.0,32.9],[7.83,39.6,126,2583.0,28.0],[7.92,41.3,114,2278.0,31.7],[8.0,35.0,125,868.0,17.2],[8.08,36.1,129,662.0,26.8],[8.17,34.5,103,456.0,20.3],[8.25,40.6,137,2001.0,32.5],[8.33,37.0,133,2276.0,23.1],[8.42,36.7,146,1227.0,23.6],[8.5,34.8,124,1328.0,25.8],[8.58,38.0,141,1429.0,22.9],[8.67,40.0,103,1789.0,19.2],[8.75,39.7,142,2007.0,36.9],[8.83,41.4,139,2586.0,22.6],[8.92,38.8,124,3246.0,27.4],[9.0,38.7,142,1343.0,39.0],[9.08,40.5,105,2472.0,25.1],[9.17,44.7,139,3160.0,34.8],[9.25,42.5,147,2229.0,40.2],[9.33,58.2,229,6962.0,99.4],[9.42,72.5,263,4819.0,100.0],[9.5,71.1,263,7904.0,100.0],[9.58,71.7,234,7050.0,100.0],[9.67,74.5,259,6907.0,100.0],[9.75,68.3,233,6670.0,100.0],[9.83,65.1,250,7189.0,100.0],[9.92,61.3,228,5693.0,96.5],[10.0,64.0,229,4747.0,92.7],[10.08,65.4,242,4315.0,97.0],[10.17,56.1,209,4166.0,83.9],[10.25,49.5,158,4149.0,69.8],[10.33,55.1,167,3535.0,63.8],[10.42,67.4,243,7048.0,100.0],[10.5,67.1,239,5911.0,95.8],[10.58,66.8,255,7194.0,100.0],[10.67,71.6,252,6640.0,100.0],[10.75,68.1,265,7044.0,100.0],[10.83,75.5,238,6703.0,100.0],[10.92,63.7,243,6555.0,100.0],[11.0,68.3,232,6514.0,100.0],[11.08,65.0,238,6500.0,100.0],[11.17,63.1,224,5639.0,91.1],[11.25,61.3,200,5845.0,89.7],[11.33,61.4,197,5384.0,88.2],[11.42,60.3,229,5497.0,87.6],[11.5,62.1,209,5517.0,75.3],[11.58,56.3,194,5412.0,68.6],[11.67,51.9,176,4252.0,71.8],[11.75,50.0,164,4105.0,47.8],[11.83,52.4,141,3454.0,57.5],[11.92,64.7,246,5549.0,100.0],[12.0,64.1,228,6120.0,94.7],[12.08,63.9,233,6044.0,90.6],[12.17,64.9,227,6222.0,88.7],[12.25,73.2,254,7218.0,100.0],[12.33,67.2,258,7263.0,100.0],[12.42,68.5,267,6564.0,100.0],[12.5,73.6,248,8319.0,100.0],[12.58,68.2,265,6534.0,100.0],[12.67,71.4,228,7128.0,100.0],[12.75,66.9,260,6994.0,100.0],[12.83,71.6,249,6861.0,100.0],[12.92,67.8,255,7537.0,100.0],[13.0,71.0,230,5480.0,100.0],[13.08,64.3,220,6084.0,100.0],[13.17,59.9,198,5693.0,79.2],[13.25,61.1,189,2286.0,66.0],[13.33,58.3,174,3099.0,69.8],[13.42,52.6,165,4548.0,69.7],[13.5,55.9,211,3010.0,63.5],[13.58,55.9,187,3644.0,53.6],[13.67,51.8,161,4614.0,63.4],[13.75,48.2,164,2453.0,57.9],[13.83,45.3,150,3628.0,47.1],[13.92,68.8,236,6299.0,95.3],[14.0,67.3,214,6026.0,100.0],[14.08,63.4,209,4235.0,97.9],[14.17,62.2,219,5780.0,90.7],[14.25,75.5,288,6136.0,100.0],[14.33,61.8,252,6416.0,100.0],[14.42,68.1,231,7188.0,99.9],[14.5,64.1,203,4985.0,88.3],[14.58,56.2,220,4958.0,79.6],[14.67,65.7,193,4204.0,86.6],[14.75,74.0,265,6026.0,100.0],[14.83,69.1,234,6358.0,100.0],[14.92,64.9,214,6315.0,96.3],[15.0,71.1,269,6925.0,100.0],[15.08,74.2,250,6802.0,100.0],[15.17,71.8,244,7118.0,100.0],[15.25,68.4,253,7751.0,100.0],[15.33,70.5,266,5781.0,100.0],[15.42,66.4,230,6779.0,90.9],[15.5,56.9,212,4566.0,84.6],[15.58,61.1,179,4590.0,88.8],[15.67,54.1,206,4980.0,70.5],[15.75,48.4,161,4132.0,63.8],[15.83,48.8,166,3630.0,61.5],[15.92,49.1,155,2302.0,51.9],[16.0,47.5,150,3308.0,48.3],[16.08,47.8,135,3104.0,30.7],[16.17,41.7,115,2127.0,38.5],[16.25,38.3,130,2897.0,31.0],[16.33,37.0,116,1990.0,24.2],[16.42,40.4,117,1244.0,32.5],[16.5,42.0,129,2148.0,33.1],[16.58,41.9,148,2594.0,36.4],[16.67,41.8,132,2393.0,25.7],[16.75,38.0,117,2036.0,32.7],[16.83,41.2,146,2436.0,28.1],[16.92,39.5,153,2837.0,31.0],[17.0,38.5,113,2717.0,23.1],[17.08,40.3,120,1859.0,36.8],[17.17,42.9,160,1848.0,31.6],[17.25,42.1,133,2935.0,43.8],[17.33,43.6,147,1393.0,29.7],[17.42,41.9,123,1938.0,33.1],[17.5,42.7,136,1875.0,34.3],[17.58,36.6,137,1439.0,32.7],[17.67,37.4,111,3161.0,26.1],[17.75,40.5,138,1941.0,21.1],[17.83,36.4,108,1114.0,21.1],[17.92,43.3,124,796.0,32.3],[18.0,38.1,118,1247.0,19.9],[18.08,38.2,131,2243.0,30.8],[18.17,39.0,138,1838.0,36.7],[18.25,40.7,112,1683.0,22.7],[18.33,33.7,127,1265.0,24.9],[18.42,34.0,116,735.0,17.5],[18.5,33.4,119,1759.0,18.5],[18.58,40.7,124,1883.0,20.7],[18.67,40.7,105,1744.0,11.6],[18.75,33.9,102,384.0,14.6],[18.83,31.0,115,709.0,14.8],[18.92,33.3,89,1499.0,15.4],[19.0,35.4,102,1439.0,10.7],[19.08,34.6,126,738.0,5.5],[19.17,35.4,94,1360.0,8.0],[19.25,36.3,132,851.0,22.7],[19.33,35.1,121,612.0,11.1],[19.42,37.3,125,866.0,8.5],[19.5,37.4,124,1518.0,25.0],[19.58,30.9,103,20.0,15.7],[19.67,36.6,114,296.0,22.8],[19.75,38.9,132,1379.0,24.6],[19.83,39.1,91,1013.0,6.2],[19.92,40.7,135,20.0,18.9],[20.0,38.1,112,1134.0,21.0],[20.08,42.5,143,1550.0,22.1],[20.17,38.5,151,2507.0,24.8],[20.25,38.0,138,1805.0,23.6],[20.33,42.8,140,2097.0,18.2],[20.42,40.8,114,1602.0,28.1],[20.5,41.1,137,2148.0,34.5],[20.58,40.0,126,1660.0,29.1],[20.67,38.4,129,784.0,19.0],[20.75,40.2,137,1023.0,23.4],[20.83,35.3,115,1132.0,25.1],[20.92,36.1,103,282.0,16.1],[21.0,35.0,115,1731.0,17.8],[21.08,40.6,117,1445.0,21.0],[21.17,35.2,101,366.0,14.3],[21.25,37.9,117,1766.0,10.8],[21.33,39.0,123,1399.0,19.0],[21.42,38.5,112,2012.0,20.5],[21.5,38.9,137,1452.0,28.4],[21.58,37.8,104,2497.0,11.9],[21.67,36.5,122,839.0,15.4],[21.75,37.1,114,1681.0,11.2],[21.83,42.9,110,2391.0,15.8],[21.92,41.4,127,1707.0,19.7],[22.0,38.0,93,1211.0,25.8],[22.08,36.2,121,1550.0,22.1],[22.17,37.4,125,1561.0,27.1],[22.25,39.7,112,748.0,13.7],[22.33,38.2,115,2222.0,20.0],[22.42,33.2,100,674.0,20.3],[22.5,38.8,95,1379.0,13.9],[22.58,32.2,94,1755.0,19.6],[22.67,39.4,98,1488.0,5.4],[22.75,32.3,75,1050.0,2.7],[22.83,31.6,88,1541.0,3.6],[22.92,29.2,109,20.0,8.9],[23.0,37.8,97,200.0,12.5],[23.08,41.7,90,1497.0,17.2],[23.17,34.4,119,1079.0,8.2],[23.25,33.8,90,787.0,13.4],[23.33,35.1,86,447.0,9.0],[23.42,33.6,96,734.0,16.6],[23.5,36.6,120,1786.0,16.2],[23.58,41.6,109,1514.0,19.7],[23.67,35.5,102,2155.0,14.1],[23.75,36.0,109,491.0,4.9],[23.83,33.2,103,1254.0,15.2],[23.92,30.7,107,1633.0,13.5]]};
+const NOM = {ram_pct:"RAM", procesos:"Procesos", red_kb_s:"Red", hora:"Hora del día", fin_de_semana:"Fin de semana"};
+const $ = id => document.getElementById(id);
+const fmtH = h => { const m = Math.round(h*60); return String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); };
+
+function predecir(x){
+  let lin = M.lin_int, lg = M.log_int; const contrib = [];
+  for (let i=0;i<5;i++){ const z=(x[i]-M.mean[i])/M.scale[i]; lin += M.lin_coef[i]*z; const c=M.log_coef[i]*z; lg += c; contrib.push(c); }
+  return {cpu: Math.min(100, Math.max(0, lin)), p: 1/(1+Math.exp(-lg)), contrib};
+}
+const estadoDe = p => p < 0.3 ? "ok" : (p < 0.6 ? "warn" : "crit");
+const TXT = {
+  ok:   {sym:"●", t:"Normal", d:"El servidor tiene margen.", rt:"Sin acción por ahora", rl:["Sigue monitoreando; no hace falta cambiar nada."]},
+  warn: {sym:"▲", t:"Precaución", d:"La carga se acerca al límite.", rt:"Vigila de cerca", rl:["Revisa qué procesos consumen más CPU.","Evita lanzar tareas pesadas ahora (respaldos, reportes).","Avisa a quien pueda repartir la carga si sigue subiendo."]},
+  crit: {sym:"■", t:"Riesgo de sobrecarga", d:"Se espera pasar del 85 % de CPU.", rt:"Actúa ahora", rl:["Cierra o pospone los procesos innecesarios.","Reparte la carga con otros servidores.","Si se repite a esta hora, amplía la capacidad (más CPU o RAM)."]}
+};
+const COLOR = {ok:"var(--ok)", warn:"var(--warn)", crit:"var(--crit)"};
+
+/* ---- Termómetro ---- */
+const Y0 = 250, Y1 = 14; // 0 % y 100 %
+const yCpu = v => Y0 - (Y0-Y1)*v/100;
+(function(){
+  let s = "";
+  for (const v of [0,25,50,75,100]) s += `<line x1="70" x2="78" y1="${yCpu(v)}" y2="${yCpu(v)}" stroke="var(--muted)" stroke-width="1.5"/><text x="82" y="${yCpu(v)+4}" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">${v}</text>`;
+  $("escala").innerHTML = s;
+  $("l85").setAttribute("y1", yCpu(85)); $("l85").setAttribute("y2", yCpu(85)); $("t85").setAttribute("y", yCpu(85)-4);
+})();
+
+function pintar(x){
+  const r = predecir(x), e = estadoDe(r.p), T = TXT[e];
+  const st = $("estado"); st.className = "status s-" + e;
+  $("sym").textContent = T.sym; $("est-t").textContent = T.t; $("est-d").textContent = T.d;
+  const y = yCpu(r.cpu);
+  $("mercurio").setAttribute("y", y); $("mercurio").setAttribute("height", Y0 + 8 - y);
+  $("mercurio").setAttribute("fill", COLOR[e]); $("bulbo").setAttribute("fill", COLOR[e]);
+  $("cpu").innerHTML = r.cpu.toFixed(1) + "<small> %</small>";
+  $("prob").innerHTML = Math.round(r.p*100) + "<small> %</small>";
+  $("pmark").style.left = (r.p*100) + "%";
+  $("rec-t").textContent = T.rt; $("rec-l").innerHTML = T.rl.map(t => `<li>${t}</li>`).join("");
+  return {r, e};
+}
+
+/* ---- Modo probar ---- */
+const PRESETS = [
+  {n:"Madrugada", x:[38,110,900,3,0]},
+  {n:"Media mañana", x:[58,170,3600,10.5,0]},
+  {n:"Se acerca el límite", x:[62,190,4300,11,0]},
+  {n:"Pico de la tarde", x:[72,225,5400,15.5,0]},
+  {n:"Sábado", x:[48,140,2000,14,1]}
+];
+const inputs = {ram:$("in-ram"), proc:$("in-proc"), red:$("in-red"), hora:$("in-hora"), fin:$("in-fin")};
+function leer(){ return [+inputs.ram.value, +inputs.proc.value, +inputs.red.value, +inputs.hora.value, inputs.fin.checked?1:0]; }
+function escribir(x){ inputs.ram.value=x[0]; inputs.proc.value=x[1]; inputs.red.value=x[2]; inputs.hora.value=x[3]; inputs.fin.checked=!!x[4]; }
+function actualizarProbar(){
+  const x = leer();
+  $("o-hora").textContent = fmtH(x[3]); $("o-ram").textContent = x[0] + " %"; $("o-proc").textContent = x[1];
+  $("o-red").textContent = x[2].toLocaleString("es") + " KB/s";
+  const {r} = pintar(x);
+  const D = 8;
+  $("contrib").innerHTML = r.contrib.map((c,i) => {
+    const w = Math.min(Math.abs(c), D)/D*50, pos = c >= 0;
+    return `<div class="crow"><span>${NOM[M.variables[i]]}</span><div class="ctrack"><div class="cbar" style="${pos?'left:50%':'right:50%'};width:${w}%;background:${pos?'var(--crit)':'var(--ok)'}"></div></div><span class="cval">${Math.abs(c) < 0.05 ? '0.0' : (pos?'+':'−')+Math.abs(c).toFixed(1)}</span></div>`;
+  }).join("");
+  document.querySelectorAll("#presets .chip").forEach((b,i) => b.setAttribute("aria-pressed", String(PRESETS[i].x.every((v,k) => Math.abs(v-x[k]) < 1e-9))));
+}
+$("presets").innerHTML = PRESETS.map((p,i) => `<button class="chip" data-i="${i}" aria-pressed="false">${p.n}</button>`).join("");
+$("presets").addEventListener("click", ev => { const b = ev.target.closest(".chip"); if (!b) return; escribir(PRESETS[+b.dataset.i].x); actualizarProbar(); });
+Object.values(inputs).forEach(el => el.addEventListener("input", actualizarProbar));
+
+/* ---- Modo simulación del día ---- */
+const S = M.serie; // [hora, ram, procesos, red, cpu real]
+const N = S.length;
+const fin = 0;
+const R = S.map(f => predecir([f[1], f[2], f[3], f[0], fin]));
+let idx = 0, timer = null, sonido = false, ctx = null, log = [], estPrev = null;
+$("dia-txt").textContent = "· " + new Date(M.dia + "T12:00:00").toLocaleDateString("es", {weekday:"long", day:"numeric", month:"long"});
+
+const W = 640, ml = 34, mr = 10;
+const px = h => ml + (h/24)*(W-ml-mr);
+function ejes(H, mt, mb, ticksY, fmtY){
+  let s = "";
+  for (const v of ticksY){ const y = mt + (1-v.p)*(H-mt-mb); s += `<line x1="${ml}" x2="${W-mr}" y1="${y}" y2="${y}" stroke="var(--rule)"/><text x="${ml-6}" y="${y+4}" text-anchor="end">${v.t}</text>`; }
+  for (let h=0; h<=24; h+=3){ s += `<text x="${px(h)}" y="${H-6}" text-anchor="middle">${String(h).padStart(2,"0")}h</text>`; }
+  return s;
+}
+function trazo(vals, H, mt, mb, vmax){ // vals hasta idx
+  return vals.map((v,i) => (i?"L":"M") + px(S[i][0]).toFixed(1) + " " + (mt + (1-Math.min(v,vmax)/vmax)*(H-mt-mb)).toFixed(1)).join("");
+}
+function dibujar(){
+  const H1 = 190, mt1 = 10, mb1 = 22;
+  const y85 = mt1 + (1-0.85)*(H1-mt1-mb1);
+  const real = S.slice(0, idx+1).map(f => f[4]), pred = R.slice(0, idx+1).map(r => r.cpu);
+  const xc = px(S[idx][0]);
+  $("g-cpu").innerHTML = ejes(H1, mt1, mb1, [0,25,50,75,100].map(v => ({p:v/100, t:v})), null)
+    + `<line x1="${ml}" x2="${W-mr}" y1="${y85}" y2="${y85}" stroke="var(--muted)" stroke-dasharray="5 4"/>`
+    + `<path d="${trazo(real,H1,mt1,mb1,100)}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>`
+    + `<path d="${trazo(pred,H1,mt1,mb1,100)}" fill="none" stroke="var(--crit)" stroke-width="1.4" stroke-opacity=".9" stroke-linejoin="round"/>`
+    + `<line x1="${xc}" x2="${xc}" y1="${mt1}" y2="${H1-mb1}" stroke="var(--ink)" stroke-opacity=".5"/>`
+    + `<circle cx="${xc}" cy="${mt1 + (1-S[idx][4]/100)*(H1-mt1-mb1)}" r="4" fill="var(--accent)"/>`;
+  const H2 = 110, mt2 = 8, mb2 = 22, yb = p => mt2 + (1-p)*(H2-mt2-mb2);
+  const probs = R.slice(0, idx+1).map(r => r.p);
+  $("g-prob").innerHTML = `<rect x="${ml}" y="${yb(1)}" width="${W-ml-mr}" height="${yb(0.6)-yb(1)}" fill="var(--crit-bg)"/>`
+    + `<rect x="${ml}" y="${yb(0.6)}" width="${W-ml-mr}" height="${yb(0.3)-yb(0.6)}" fill="var(--warn-bg)"/>`
+    + `<rect x="${ml}" y="${yb(0.3)}" width="${W-ml-mr}" height="${yb(0)-yb(0.3)}" fill="var(--ok-bg)"/>`
+    + ejes(H2, mt2, mb2, [{p:0,t:"0"},{p:0.3,t:".3"},{p:0.6,t:".6"},{p:1,t:"1"}], null)
+    + `<path d="${probs.map((v,i) => (i?"L":"M") + px(S[i][0]).toFixed(1) + " " + yb(v).toFixed(1)).join("")}" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>`
+    + `<line x1="${xc}" x2="${xc}" y1="${mt2}" y2="${H2-mb2}" stroke="var(--ink)" stroke-opacity=".5"/>`;
+}
+function beep(){
+  if (!sonido) return;
+  try { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = "square"; o.frequency.value = 880; g.gain.value = 0.05; o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.18); } catch(e){}
+}
+function registrar(e, i){
+  if (estPrev === e) return;
+  const T = TXT[e];
+  if (estPrev !== null || e !== "ok") log.unshift({e, h:S[i][0], p:R[i].p, cpu:R[i].cpu});
+  if (e === "crit") beep();
+  estPrev = e;
+  $("log").innerHTML = log.slice(0,40).map(l => `<li><time>${fmtH(l.h)}</time><span class="tag ${l.e}">${TXT[l.e].t}</span><span>probabilidad ${Math.round(l.p*100)} %, CPU predicha ${l.cpu.toFixed(0)} %</span></li>`).join("") || `<li>Sin alertas todavía.</li>`;
+}
+function mostrar(i){
+  idx = i; const f = S[i];
+  $("reloj").textContent = fmtH(f[0]);
+  $("ahora").innerHTML = [["CPU real", f[4].toFixed(0)+" %"],["CPU predicha", R[i].cpu.toFixed(0)+" %"],["RAM", f[1].toFixed(0)+" %"],["Procesos", f[2]]]
+    .map(([a,b]) => `<div><b>${b}</b><span>${a}</span></div>`).join("");
+  pintar([f[1], f[2], f[3], f[0], fin]);
+  dibujar();
+}
+function reconstruirHasta(i){ log = []; estPrev = null; const s = sonido; sonido = false; for (let k=0;k<=i;k++) registrar(estadoDe(R[k].p), k); sonido = s; mostrar(i); }
+function paso(){ if (idx >= N-1){ detener(); return; } const i = idx+1; registrar(estadoDe(R[i].p), i); mostrar(i); }
+function iniciar(){ if (idx >= N-1) reconstruirHasta(0); $("play").textContent = "Pausar"; timer = setInterval(paso, 600/(+$("vel").value)); }
+function detener(){ clearInterval(timer); timer = null; $("play").textContent = (idx >= N-1) ? "Repetir" : "Reproducir"; }
+$("play").addEventListener("click", () => timer ? detener() : iniciar());
+$("reiniciar").addEventListener("click", () => { detener(); reconstruirHasta(0); $("play").textContent = "Reproducir"; });
+$("vel").addEventListener("change", () => { if (timer){ clearInterval(timer); timer = setInterval(paso, 600/(+$("vel").value)); } });
+$("sonido").addEventListener("click", () => {
+  sonido = !sonido; $("sonido").setAttribute("aria-pressed", String(sonido)); $("sonido").textContent = "Sonido: " + (sonido ? "sí" : "no");
+  if (sonido){ try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume && ctx.resume(); beep(); } catch(e){ sonido = false; $("sonido").textContent = "Sonido: no disponible"; } }
+});
+
+/* ---- Pestañas ---- */
+function modo(m){
+  const vivo = m === "vivo";
+  $("tab-probar").setAttribute("aria-selected", String(!vivo)); $("tab-vivo").setAttribute("aria-selected", String(vivo));
+  $("panel-probar").hidden = vivo; $("panel-vivo").hidden = !vivo;
+  if (vivo){ if (!window.__vivoListo){ window.__vivoListo = true; let k = R.findIndex((r, i) => S[i][0] >= 8 && r.p >= 0.6); if (k < 0) k = 100; reconstruirHasta(Math.min(N-1, k + 10)); } else mostrar(idx); }
+  else { detener(); $("play").textContent = "Reproducir"; actualizarProbar(); }
+}
+$("tab-probar").addEventListener("click", () => modo("probar"));
+$("tab-vivo").addEventListener("click", () => modo("vivo"));
+
+escribir(PRESETS[2].x); actualizarProbar();
+</script>
+</body>
+</html>
