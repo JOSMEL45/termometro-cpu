@@ -39,6 +39,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:fle
 h1{font-size:30px;line-height:1.1;font-weight:700}
 .sub{color:var(--muted);margin:4px 0 0;font-size:14px}
 .tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:4px}
+.tabs{flex-wrap:wrap}
 .tabs button{font:600 14px var(--display);letter-spacing:.02em;border:0;background:transparent;color:var(--muted);padding:8px 14px;border-radius:7px;cursor:pointer}
 .tabs button[aria-selected="true"]{background:var(--accent);color:#fff}
 button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -100,6 +101,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .btn{font:600 14px var(--display);letter-spacing:.02em;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 16px;cursor:pointer}
 .btn.ghost{background:transparent;color:var(--accent)}
 .clock{font:600 22px var(--mono);margin-left:auto}
+input[type=text]{font:14px var(--mono);background:var(--panel);color:var(--ink);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;min-width:200px;flex:1}
 select{font:14px var(--body);background:var(--panel);color:var(--ink);border:1px solid var(--rule);border-radius:8px;padding:7px 8px}
 .chart{width:100%;height:auto;display:block}
 .chart text{font:11px var(--mono);fill:var(--muted)}
@@ -132,6 +134,7 @@ details p{color:var(--muted);margin:8px 0 0}
     <div class="tabs" role="tablist" aria-label="Modo">
       <button role="tab" id="tab-probar" aria-selected="true" aria-controls="panel-probar">Probar valores</button>
       <button role="tab" id="tab-vivo" aria-selected="false" aria-controls="panel-vivo">Simulación del día</button>
+      <button role="tab" id="tab-colab" aria-selected="false" aria-controls="panel-colab">Recibir de Colab</button>
     </div>
   </header>
 
@@ -204,14 +207,34 @@ details p{color:var(--muted);margin:8px 0 0}
         <ul class="log" id="log"></ul>
       </div>
     </section>
+
+    <section id="panel-colab" role="tabpanel" aria-labelledby="tab-colab" hidden>
+      <div class="card">
+        <h2>Datos desde Colab</h2>
+        <div class="live-top">
+          <label for="canal" style="font-size:13px;color:var(--muted)">Canal</label>
+          <input id="canal" type="text" placeholder="termometro-cpu-ab12cd34" autocomplete="off" spellcheck="false" aria-describedby="conn">
+          <button class="btn" id="conectar">Conectar</button>
+        </div>
+        <p class="hint" id="conn" role="status" aria-live="polite" style="margin:0 0 12px">Sin conexión. Escribe el canal que muestra Colab y pulsa Conectar.</p>
+        <div class="now" id="ahora-c"></div>
+        <div class="legend"><span><b style="background:var(--crit)"></b>CPU predicha</span><span><b style="background:var(--accent)"></b>CPU real (si Colab la envía)</span><span><b style="background:var(--muted);height:2px"></b>Umbral 85 %</span></div>
+        <svg class="chart" id="g-cpu-c" viewBox="0 0 640 190" role="img" aria-label="CPU predicha de los últimos datos recibidos"></svg>
+        <div class="legend" style="margin-top:10px"><span>Probabilidad de sobrecarga</span></div>
+        <svg class="chart" id="g-prob-c" viewBox="0 0 640 110" role="img" aria-label="Probabilidad de sobrecarga de los últimos datos recibidos"></svg>
+        <h2 style="margin-top:16px">Registro de alertas</h2>
+        <ul class="log" id="log-c"><li>Sin datos todavía.</li></ul>
+      </div>
+    </section>
   </div>
 
   <div class="card">
     <details>
       <summary>Cómo funciona</summary>
       <p>Dos modelos entrenados con 4500 mediciones: una regresión lineal calcula el porcentaje de CPU a partir de la RAM, los procesos, la red y la hora; una regresión logística calcula la probabilidad de que la CPU pase del 85 %. El estado es Normal con menos de 30 % de probabilidad, Precaución entre 30 % y 60 %, y Riesgo desde 60 %.</p>
+      <p>El modo «Recibir de Colab» escucha un canal público de ntfy.sh: cualquiera que conozca el nombre del canal puede leer lo que se envíe, así que usa un nombre difícil de adivinar y solo datos de prueba.</p>
     </details>
-    <p class="note" style="margin-top:12px">Los datos de entrenamiento son simulados. Esta página no lee ningún servidor real: para eso haría falta un programa en el servidor que mida CPU, RAM, procesos y red, y los envíe aquí.</p>
+    <p class="note" style="margin-top:12px">Los datos de entrenamiento son simulados. Esta página no mide ningún servidor por sí sola: recibe los datos que le envía Colab (o los que pongas a mano). Para vigilar un servidor real haría falta un programa en ese servidor que mida CPU, RAM, procesos y red, y los envíe al canal.</p>
   </div>
 </div>
 
@@ -356,18 +379,91 @@ $("sonido").addEventListener("click", () => {
   if (sonido){ try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume && ctx.resume(); beep(); } catch(e){ sonido = false; $("sonido").textContent = "Sonido: no disponible"; } }
 });
 
+/* ---- Recibir de Colab (canal ntfy.sh) ---- */
+let es = null, rec = [], logC = [], estPrevC = null;
+const hhmmss = d => d.toLocaleTimeString("es", {hour12:false});
+function numero(v, def){ const n = Number(v); return (v === undefined || v === null || v === "" || !Number.isFinite(n)) ? def : n; }
+function desconectar(silencio){
+  if (es){ es.close(); es = null; }
+  $("conectar").textContent = "Conectar";
+  if (!silencio) $("conn").textContent = "Desconectado.";
+}
+function conectar(){
+  const canal = $("canal").value.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(canal)){ $("conn").textContent = "El canal solo puede tener letras, números, guion y guion bajo (máximo 64 caracteres)."; return; }
+  desconectar(true); $("conn").textContent = "Conectando…";
+  try { es = new EventSource("https://ntfy.sh/" + encodeURIComponent(canal) + "/sse"); }
+  catch(e){ $("conn").textContent = "Este navegador no pudo abrir la conexión."; return; }
+  $("conectar").textContent = "Desconectar";
+  es.onopen = () => { $("conn").textContent = "Conectado al canal «" + canal + "». Esperando datos de Colab…"; };
+  es.onmessage = ev => { try { recibir(JSON.parse(ev.data).message); } catch(e){} };
+  es.onerror = () => { $("conn").textContent = "Sin conexión con ntfy.sh. Reintentando… Revisa tu internet y el nombre del canal."; };
+}
+function recibir(txt){
+  let d; try { d = JSON.parse(txt); } catch(e){ return; }
+  if (!d || typeof d !== "object") return;
+  const ahora = new Date();
+  const x = [numero(d.ram_pct ?? d.ram, NaN), numero(d.procesos, NaN), numero(d.red_kb_s ?? d.red, NaN),
+             numero(d.hora, ahora.getHours() + ahora.getMinutes()/60), numero(d.fin_de_semana ?? d.fin, 0) ? 1 : 0];
+  if (x.slice(0,3).some(v => !Number.isFinite(v))) return;
+  const r = predecir(x), e = estadoDe(r.p);
+  rec.push({x, r, e, real: numero(d.cpu_real, null), t: ahora}); if (rec.length > 120) rec.shift();
+  if (e !== estPrevC){ logC.unshift({e, t: ahora, p: r.p, cpu: r.cpu}); estPrevC = e; }
+  $("conn").textContent = "Recibiendo datos. Último: " + hhmmss(ahora);
+  if (!$("panel-colab").hidden) mostrarColab();
+}
+function mostrarColab(){
+  if (!rec.length) return;
+  const u = rec[rec.length-1]; pintar(u.x);
+  $("ahora-c").innerHTML = [["CPU predicha", u.r.cpu.toFixed(0)+" %"],["Probabilidad", Math.round(u.r.p*100)+" %"],["RAM", u.x[0].toFixed(0)+" %"],["Procesos", Math.round(u.x[1])]]
+    .map(([a,b]) => `<div><b>${b}</b><span>${a}</span></div>`).join("");
+  const v = rec.slice(-60), n = v.length, W2 = 640, mlc = 34, mrc = 10;
+  const xi = i => mlc + (n > 1 ? i/(n-1) : 0.5)*(W2-mlc-mrc);
+  const H1 = 190, mt1 = 10, mb1 = 22, y1 = c => mt1 + (1-Math.min(c,100)/100)*(H1-mt1-mb1);
+  let g = "";
+  for (const t of [0,25,50,75,100]) g += `<line x1="${mlc}" x2="${W2-mrc}" y1="${y1(t)}" y2="${y1(t)}" stroke="var(--rule)"/><text x="${mlc-6}" y="${y1(t)+4}" text-anchor="end">${t}</text>`;
+  g += `<line x1="${mlc}" x2="${W2-mrc}" y1="${y1(85)}" y2="${y1(85)}" stroke="var(--muted)" stroke-dasharray="5 4"/>`
+     + `<text x="${mlc}" y="${H1-6}">hace ${n} datos</text><text x="${W2-mrc}" y="${H1-6}" text-anchor="end">ahora</text>`;
+  const ruta = f => v.map((q,i) => { const y = f(q); return y == null ? "" : (i ? "L" : "M") + xi(i).toFixed(1) + " " + y1(y).toFixed(1); }).join("");
+  g += `<path d="${v.map((q,i) => q.real == null ? "" : ((i?"L":"M") + xi(i).toFixed(1) + " " + y1(q.real).toFixed(1))).join("")}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>`
+     + `<path d="${ruta(q => q.r.cpu)}" fill="none" stroke="var(--crit)" stroke-width="1.6" stroke-linejoin="round"/>`
+     + `<circle cx="${xi(n-1)}" cy="${y1(v[n-1].r.cpu)}" r="4" fill="var(--crit)"/>`;
+  $("g-cpu-c").innerHTML = g;
+  const H2 = 110, mt2 = 8, mb2 = 22, yb = p => mt2 + (1-p)*(H2-mt2-mb2);
+  let g2 = `<rect x="${mlc}" y="${yb(1)}" width="${W2-mlc-mrc}" height="${yb(0.6)-yb(1)}" fill="var(--crit-bg)"/><rect x="${mlc}" y="${yb(0.6)}" width="${W2-mlc-mrc}" height="${yb(0.3)-yb(0.6)}" fill="var(--warn-bg)"/><rect x="${mlc}" y="${yb(0.3)}" width="${W2-mlc-mrc}" height="${yb(0)-yb(0.3)}" fill="var(--ok-bg)"/>`;
+  for (const [p,t] of [[0,"0"],[0.3,".3"],[0.6,".6"],[1,"1"]]) g2 += `<text x="${mlc-6}" y="${yb(p)+4}" text-anchor="end">${t}</text>`;
+  g2 += `<path d="${v.map((q,i) => (i?"L":"M") + xi(i).toFixed(1) + " " + yb(q.r.p).toFixed(1)).join("")}" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>`;
+  $("g-prob-c").innerHTML = g2;
+  $("log-c").innerHTML = logC.slice(0,40).map(l => `<li><time>${hhmmss(l.t)}</time><span class="tag ${l.e}">${TXT[l.e].t}</span><span>probabilidad ${Math.round(l.p*100)} %, CPU predicha ${l.cpu.toFixed(0)} %</span></li>`).join("") || "<li>Sin datos todavía.</li>";
+}
+$("conectar").addEventListener("click", () => es ? desconectar() : conectar());
+$("canal").addEventListener("keydown", ev => { if (ev.key === "Enter") conectar(); });
+
 /* ---- Pestañas ---- */
 function modo(m){
-  const vivo = m === "vivo";
-  $("tab-probar").setAttribute("aria-selected", String(!vivo)); $("tab-vivo").setAttribute("aria-selected", String(vivo));
-  $("panel-probar").hidden = vivo; $("panel-vivo").hidden = !vivo;
-  if (vivo){ if (!window.__vivoListo){ window.__vivoListo = true; let k = R.findIndex((r, i) => S[i][0] >= 8 && r.p >= 0.6); if (k < 0) k = 100; reconstruirHasta(Math.min(N-1, k + 10)); } else mostrar(idx); }
-  else { detener(); $("play").textContent = "Reproducir"; actualizarProbar(); }
+  const tabs = {probar:"panel-probar", vivo:"panel-vivo", colab:"panel-colab"};
+  for (const k in tabs){ $("tab-"+k).setAttribute("aria-selected", String(k === m)); $(tabs[k]).hidden = (k !== m); }
+  if (m !== "vivo") { detener(); $("play").textContent = (idx >= N-1) ? "Repetir" : "Reproducir"; }
+  if (m === "vivo"){ if (!window.__vivoListo){ window.__vivoListo = true; let k = R.findIndex((r, i) => S[i][0] >= 8 && r.p >= 0.6); if (k < 0) k = 100; reconstruirHasta(Math.min(N-1, k + 10)); } else mostrar(idx); }
+  else if (m === "colab"){ rec.length ? mostrarColab() : pintar(leer()); }
+  else actualizarProbar();
 }
 $("tab-probar").addEventListener("click", () => modo("probar"));
 $("tab-vivo").addEventListener("click", () => modo("vivo"));
+$("tab-colab").addEventListener("click", () => modo("colab"));
 
 escribir(PRESETS[2].x); actualizarProbar();
+
+/* ---- Enlaces desde Colab: ?canal=... o ?ram=..&procesos=..&red=..&hora=..&fin=.. ---- */
+(function(){
+  const q = new URLSearchParams(location.search);
+  if (q.has("canal")){ $("canal").value = q.get("canal"); modo("colab"); conectar(); return; }
+  const k = [["ram",0],["procesos",1],["red",2],["hora",3],["fin",4]];
+  if (k.some(([n]) => q.has(n))){
+    const x = leer(); k.forEach(([n,i]) => { if (q.has(n) && Number.isFinite(+q.get(n))) x[i] = +q.get(n); });
+    escribir(x); actualizarProbar();
+  }
+})();
 </script>
 </body>
 </html>
